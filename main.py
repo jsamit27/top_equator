@@ -15,10 +15,10 @@ genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 # Initialize Gemini model
 model = genai.GenerativeModel("gemini-1.5-flash")
 
-# Create FastAPI app
+# Initialize FastAPI
 app = FastAPI()
 
-# Enable CORS
+# CORS middleware (optional but useful for frontend support)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -27,11 +27,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Pydantic model for response
+# Root route for quick health check
+@app.get("/")
+def read_root():
+    return {"message": "Resume Matcher API is live!"}
+
+# API response model
 class MatchResponse(BaseModel):
     match_score: float
 
-# Utility: Extract text from uploaded PDF/TXT file
+# Extract text from uploaded file
 def extract_text_from_file(file: UploadFile) -> str:
     try:
         if file.filename.lower().endswith(".pdf"):
@@ -48,15 +53,16 @@ def extract_text_from_file(file: UploadFile) -> str:
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error processing file: {str(e)}")
 
-# Utility: Extract JSON safely from Gemini output
+# Extract JSON from Gemini output
 def extract_json_from_text(text: str) -> dict:
     try:
         json_str = re.search(r"\{.*?\}", text, re.DOTALL).group()
         return json.loads(json_str)
-    except Exception:
+    except Exception as e:
+        print("❌ Failed to extract JSON:", e)
         raise HTTPException(status_code=500, detail="Failed to extract valid JSON from Gemini response")
 
-# Main logic: Send prompt to Gemini and extract match score
+# Query Gemini and return match score
 def query_gemini_for_match(resume_text: str, jd_text: str) -> MatchResponse:
     prompt = f"""
 You are an expert career coach and hiring analyst.
@@ -82,16 +88,17 @@ Job Description:
 Resume:
 {resume_text}
 """
-
     try:
         response = model.generate_content(prompt)
-        print("Gemini response:\n", response.text)  # Optional for debugging
+        print("==== Gemini Raw Output ====")
+        print(response.text)
         result = extract_json_from_text(response.text)
         return MatchResponse(**result)
     except Exception as e:
+        print("❌ Gemini error:", e)
         raise HTTPException(status_code=500, detail=f"Error querying Gemini: {str(e)}")
 
-# API endpoint
+# POST endpoint for matching resume and JD
 @app.post("/match")
 async def match_resume_jd(
     resume: UploadFile = File(...),
@@ -105,4 +112,5 @@ async def match_resume_jd(
     except HTTPException:
         raise
     except Exception as e:
+        print("❌ Unexpected error:", e)
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
